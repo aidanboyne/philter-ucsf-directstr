@@ -15,13 +15,13 @@ import numpy
 import random
 import string
 
-
 class Philter:
     """ 
         General text filtering class,
         can filter using whitelists, blacklists, regex's and POS
     """
     def __init__(self, config):
+
         if "verbose" in config:
             self.verbose = config["verbose"]
         if "run_eval" in config:
@@ -29,15 +29,23 @@ class Philter:
         if "freq_table" in config:
             self.freq_table = config["freq_table"]
         if "initials" in config:
-            self.initials = config["initials"]                     
-        if "finpath" in config:
+            self.initials = config["initials"]     
+
+        # --- Modified ---                
+        if "finpath" in config and config["finpath"] is not None:
             if not os.path.exists(config["finpath"]):
                 raise Exception("Filepath does not exist", config["finpath"])
             self.finpath = config["finpath"]
-        if "foutpath" in config:
+        else:
+            self.finpath = None
+        if "foutpath" in config and config["foutpath"] is not None:
             if not os.path.exists(config["foutpath"]):
                 raise Exception("Filepath does not exist", config["foutpath"])
             self.foutpath = config["foutpath"]
+        else:
+            self.foutpath = None
+        # ------
+
         if "anno_folder" in config:
             if not os.path.exists(config["anno_folder"]):
                 raise Exception("Filepath does not exist", config["anno_folder"])
@@ -286,7 +294,7 @@ class Philter:
                 #self.patterns[i]["coordinate_map"].add_file(filename)
 
                 encoding = self.detect_encoding(filename)
-                if __debug__: print("reading text from " + filename)
+                # if __debug__: print("reading text from " + filename)
                 txt = open(filename,"r", encoding=encoding['encoding'], errors='surrogateescape').read()
 
                 # Get full self.include/exclude map before transform
@@ -347,7 +355,7 @@ class Philter:
             generating a coordinate map of hits given (dry run doesn't transform)
         """
 
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -411,7 +419,7 @@ class Philter:
 
         punctuation_matcher = re.compile(r"[^a-zA-Z0-9*]")
 
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -498,7 +506,7 @@ class Philter:
 
     def match_all(self, filename="", text="", pattern_index=-1):
         """ Simply maps to the entirety of the file """
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -513,7 +521,7 @@ class Philter:
 
     def map_set(self, filename="", text="", pattern_index=-1,  pre_process= r"[^a-zA-Z0-9]"):
         """ Creates a coordinate mapping of words any words in this set"""
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -579,7 +587,7 @@ class Philter:
 
     def map_pos(self, filename="", text="", pattern_index=-1, pre_process= r"[^a-zA-Z0-9]"):
         """ Creates a coordinate mapping of words which match this part of speech (POS)"""
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -623,7 +631,7 @@ class Philter:
     def map_ner(self, filename="", text="", pattern_index=-1, pre_process= r"[^a-zA-Z0-9]+"):
         """ map NER tagging"""
       
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         if pattern_index < 0 or pattern_index >= len(self.patterns):
@@ -780,16 +788,24 @@ class Philter:
             #keeps a record of all phi coordinates and text for a given file
             # data = {}
         
-            filename = root+f
+            filename = os.path.join(root,f)
 
-            encoding = self.detect_encoding(filename)
-            txt = open(filename,"r", encoding=encoding['encoding']).read()
+            ### --- Aidan Edit - graceful failure --- ###
+            try:
+                encoding = self.detect_encoding(filename)
+                with open(filename, "r", encoding=encoding['encoding']) as infile:
+                    txt = infile.read()
+            except Exception as e:
+                print(f"Warning: could not read {filename} due to encoding error ({e}) — skipping.")
+                continue
 
-
+            fbase, fext = os.path.splitext(f)
+            outpathfbase = os.path.join(out_path, fbase)
+            ### --- End edit --- ###
 
             #now we transform the text
             fbase, fext = os.path.splitext(f)
-            outpathfbase = out_path + fbase
+            outpathfbase = os.path.join(out_path, fbase)
             if self.outformat == "asterisk":
                 with open(outpathfbase+".txt", "w", encoding='utf-8', errors='surrogateescape') as f:
                     contents = self.transform_text_asterisk(txt, filename)
@@ -826,6 +842,15 @@ class Philter:
                 start,stop = self.include_map.get_coords(infilename, i)
                 contents.append(txt[start:stop])
                 last_marker = stop
+            # ### ---- AIDAN ADDED TO TRACK COORDS --- ###
+            #     json_path = "C:/Users/aidan/NLP_Thrombo/philter_ucsf_master/coords_map_102825.jsonl"  # hard path
+            #     entry = {
+            #         "filename": infilename,
+            #         "coords": [{"start": start, "stop": stop}]
+            #     }
+            #     with open(json_path, "a") as f:
+            #         f.write(json.dumps(entry) + "\n")
+            # ### --- END --- ###
             elif punctuation_matcher.match(txt[i]):
                 contents.append(txt[i])
             else:
@@ -867,6 +892,70 @@ class Philter:
         contents.append("</"+root+">\n")
         
         return "".join(contents)
+
+    # --- Added 2.26.26 ---
+    def process_string(self, text, doc_id="string_input"):
+        """
+        Process a single string through the initialized philter and return the filtered string.
+        Clears coordinate maps first to prevent memory leaks in a pipeline loop.
+        """
+        # 1. Reset state for pipeline processing to avoid data carrying over between notes
+        self.data_all_files = {}
+        self.cleaned = {}
+        self.pos_tags = {}
+        self.include_map = CoordinateMap()
+        self.exclude_map = CoordinateMap()
+        self.full_exclude_map = {}
+        
+        for phi_type in self.phi_type_list:
+            self.phi_type_dict[phi_type] = [CoordinateMap()]
+            
+        for i, pat in enumerate(self.patterns):
+            self.patterns[i]["coordinate_map"] = CoordinateMap()
+
+        # 2. Map coordinates for the single string
+        self.data_all_files[doc_id] = {"text": text, "phi": [], "non-phi": []}
+        self.exclude_map.add_file(doc_id)
+        self.include_map.add_file(doc_id)
+        
+        for phi_type in self.phi_type_list:
+            self.phi_type_dict[phi_type][0].add_file(doc_id)
+
+        for i, pat in enumerate(self.patterns):
+            if pat["type"] == "regex":
+                self.map_regex(filename=doc_id, text=text, pattern_index=i)
+            elif pat["type"] == "set":
+                self.map_set(filename=doc_id, text=text, pattern_index=i)
+            elif pat["type"] == "regex_context":
+                self.map_regex_context(filename=doc_id, text=text, pattern_index=i)
+            elif pat["type"] == "stanford_ner":
+                self.map_ner(filename=doc_id, text=text, pattern_index=i)
+            elif pat["type"] == "pos_matcher":
+                self.map_pos(filename=doc_id, text=text, pattern_index=i)
+            elif pat["type"] == "match_all":
+                self.match_all(filename=doc_id, text=text, pattern_index=i)
+            else:
+                raise Exception("Error, pattern type not supported: ", pat["type"])
+                
+            self.get_exclude_include_maps(doc_id, pat, text)
+
+        self.full_exclude_map[doc_id] = self.include_map.get_complement(doc_id, text)
+        
+        for phi_type in self.phi_type_list:
+            for start, stop in self.phi_type_dict[phi_type][0].filecoords(doc_id):
+                self.data_all_files[doc_id]["phi"].append({
+                    "start": start, "stop": stop, "word": text[start:stop],
+                    "phi_type": phi_type, "filepath": ""
+                })
+
+        # 3. Transform and return directly
+        if self.outformat == "asterisk":
+            return self.transform_text_asterisk(text, doc_id)
+        elif self.outformat == "i2b2":
+            return self.transform_text_i2b2(self.data_all_files[doc_id])
+        else:
+            raise Exception("Outformat not supported: ", self.outformat)
+    # --- End addition ---
                 
     def detect_encoding(self, fp):
         if not os.path.exists(fp):
@@ -883,7 +972,7 @@ class Philter:
 
     def phi_context(self, filename, word, word_index, words, context_window=10):
         """ helper function, creates our phi data type with source file, and context window"""
-        if not os.path.exists(filename):
+        if self.finpath and not os.path.exists(filename):
             raise Exception("Filepath does not exist", filename)
 
         left_index = word_index - context_window
@@ -2420,5 +2509,3 @@ class Philter:
 
         items.sort(key=lambda x: x["count"], reverse=True)
         json.dump(items, open(sorted_path, "w"), indent=4)
-
-
